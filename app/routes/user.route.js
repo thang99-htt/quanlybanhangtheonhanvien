@@ -7,6 +7,9 @@ router.route("/")
     .get(users.findAll)
     .post(users.create);
 
+router.route("/findbysale")
+    .get(users.findAllSale);
+
 router.route("/login")
     .post(users.login);
 

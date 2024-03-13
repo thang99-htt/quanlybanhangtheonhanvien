@@ -5,6 +5,8 @@ const usersRouter = require("./app/routes/user.route");
 const productsRouter = require("./app/routes/product.route");
 const ordersRouter = require("./app/routes/order.route");
 const revenuesRouter = require("./app/routes/revenue.route");
+const notificationsRouter = require("./app/routes/notification.route");
+
 
 const ApiError = require("./app/api-error");
 
@@ -18,6 +20,7 @@ app.use("/api/users", usersRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/revenues", revenuesRouter);
+app.use("/api/notifications", notificationsRouter);
 
 app.get("/", (req, res) => {
     res.json({ message: "Quản lý bán hàng theo Nhân viên."});
@@ -34,5 +37,7 @@ app.use((error, req, res, next) => {
         message: error.message || "Internal Server Error",
     });
 });
+
+
 
 module.exports = app;

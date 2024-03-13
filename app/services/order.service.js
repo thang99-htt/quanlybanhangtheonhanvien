@@ -8,7 +8,6 @@ class OrderService {
     extractOrderData(payload) {
         const orderData = {
             user_id: payload.user_id,
-            customer_id: payload.customer_id,
             ordered_at: payload.ordered_at,
             name_customer: payload.name_customer,
             phone_customer: payload.phone_customer,
@@ -28,11 +27,10 @@ class OrderService {
     }
 
     async create(payload) {
-        const { user_id, customer_id, ordered_at, name_customer, phone_customer, address_customer, total_value, status, details } = this.extractOrderData(payload);
+        const { user_id, ordered_at, name_customer, phone_customer, address_customer, total_value, status, details } = this.extractOrderData(payload);
     
         const order = {
             user_id,
-            customer_id,
             ordered_at: new Date(),
             name_customer,
             phone_customer,
@@ -51,26 +49,19 @@ class OrderService {
                     } else {
                         // Lấy id của đơn hàng vừa thêm vào
                         const orderId = insertOrderResult.insertId;
-                        const selectOrderQuery = 'SELECT * FROM orders WHERE id = ?';
-                        this.connection.query(selectOrderQuery, [orderId], (orderError, orderResult) => {
-                            if (orderError) {
-                                reject(orderError);
+                        
+                        // Thêm các chi tiết đơn hàng vào bảng order_product
+                        const orderProductValues = details.map(detail => [orderId, detail.product_id, detail.price, detail.quantity]);
+                        const insertOrderProductQuery = 'INSERT INTO order_product (order_id, product_id, price, quantity) VALUES ?';
+                        this.connection.query(insertOrderProductQuery, [orderProductValues], (insertOrderProductError, insertOrderProductResult) => {
+                            if (insertOrderProductError) {
+                                reject(insertOrderProductError);
                             } else {
-                                const orderDetails = orderResult[0];
-                                // Sau khi lấy thông tin đơn hàng, tiếp tục lấy chi tiết đơn hàng
-                                const selectOrderProductQuery = 'SELECT * FROM order_product WHERE order_id = ?';
-                                this.connection.query(selectOrderProductQuery, [orderId], (orderProductError, orderProductResult) => {
-                                    if (orderProductError) {
-                                        reject(orderProductError);
-                                    } else {
-                                        // Thêm chi tiết đơn hàng vào thông tin đơn hàng
-                                        orderDetails.details = orderProductResult;
-                                        resolve(orderDetails);
-                                    }
-                                });
+                                // Sau khi thêm thành công các chi tiết đơn hàng, trả về thông tin đơn hàng
+                                const orderDetails = { ...order, id: orderId, details };
+                                resolve(orderDetails);
                             }
                         });
-
                     }
                 });
             } catch (error) {
@@ -78,25 +69,76 @@ class OrderService {
             }
         });
     }
+    
 
     async find() {
         return new Promise((resolve, reject) => {
-            const query = 'SELECT * FROM orders';
+            const query = `
+                SELECT o.id, o.user_id, o.ordered_at, o.received_at, o.name_customer, 
+                o.phone_customer, o.address_customer, o.total_value, o.status,
+                op.product_id, op.price, op.quantity, p.name, p.image, u.name as user_name
+                FROM orders o
+                INNER JOIN order_product op ON o.id = op.order_id
+                INNER JOIN products p ON op.product_id = p.id
+                INNER JOIN users u ON o.user_id = u.id
+                ORDER BY o.id DESC`;
+    
             this.connection.query(query, (error, results) => {
                 if (error) {
                     reject(error);
                 } else {
-                    resolve(results);
+                    const orders = [];
+                    let currentOrderId = null;
+                    let order = null;
+    
+                    for (const row of results) {
+                        if (row.id !== currentOrderId) {
+                            if (order !== null) {
+                                orders.push(order);
+                            }
+                            order = {
+                                id: row.id,
+                                user_id: row.user_id,
+                                user_name: row.user_name,
+                                ordered_at: row.ordered_at,
+                                received_at: row.received_at,
+                                name_customer: row.name_customer,
+                                phone_customer: row.phone_customer,
+                                address_customer: row.address_customer,
+                                total_value: row.total_value,
+                                status: row.status,
+                                details: []
+                            };
+                            currentOrderId = row.id;
+                        }
+    
+                        const detail = {
+                            product_id: row.product_id,
+                            product_name: row.name, // Thêm tên sản phẩm vào chi tiết đơn hàng
+                            product_image: row.image, // Thêm tên sản phẩm vào chi tiết đơn hàng
+                            price: row.price,
+                            quantity: row.quantity
+                        };
+                        order.details.push(detail);
+                    }
+    
+                    if (order !== null) {
+                        orders.push(order);
+                    }
+    
+                    resolve(orders);
                 }
             });
         });
     }
+    
+    
 
     async findById(id) {
         try {
             const result = new Promise((resolve, reject) => {
                 const query = `
-                    SELECT o.id, o.user_id, o.customer_id, o.ordered_at, o.received_at, o.name_customer, 
+                    SELECT o.id, o.user_id, o.ordered_at, o.received_at, o.name_customer, 
                     o.phone_customer, o.address_customer, o.total_value, o.status,
                     op.product_id, op.price, op.quantity
                     FROM orders o
@@ -111,7 +153,6 @@ class OrderService {
                         const order = {
                             id: results[0].id,
                             user_id: results[0].user_id,
-                            customer_id: results[0].customer_id,
                             ordered_at: results[0].ordered_at,
                             received_at: results[0].received_at,
                             name_customer: results[0].name_customer,

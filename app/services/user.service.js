@@ -11,7 +11,7 @@ class UserService {
             manager_id: payload.manager_id,
             email: payload.email,
             password: payload.password,
-            position: payload.position,
+            role: payload.role,
             presenter: payload.presenter
         };
     
@@ -44,16 +44,16 @@ class UserService {
     }
 
     async create(payload) {
-        const { name, email, password, position, presenter, manager_id } = this.extractUserData(payload);
+        const { name, email, password, role, presenter, manager_id } = this.extractUserData(payload);
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const user = {
             name,
-            manager_id,
+            manager_id: manager_id === -1 ? null : manager_id,
             email,
             password: hashedPassword,
-            position,
+            role,
             presenter
         };
 
@@ -69,7 +69,25 @@ class UserService {
 
     async find() {
         return new Promise((resolve, reject) => {
-            const query = 'SELECT * FROM users';
+            const query = `SELECT u.*, m.name AS manager 
+            FROM users u 
+            LEFT JOIN users m ON u.manager_id = m.id;
+            `;
+            this.connection.query(query, (error, results) => {
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve(results);
+                }
+            });
+        });
+    }
+
+    async findBySale() {
+        return new Promise((resolve, reject) => {
+            const query = `SELECT id
+            FROM users where role = "Nhân viên bán hàng" OR role = "Quản lý bán hàng" OR role = "Người quản trị";
+            `;
             this.connection.query(query, (error, results) => {
                 if (error) {
                     reject(error);
@@ -83,21 +101,29 @@ class UserService {
     async findById(id) {
         try {
             const result = new Promise((resolve, reject) => {
-                const query = 'SELECT * FROM users WHERE id = ?';
-                this.connection.query(query, [id], (error, results) => {
+                const query = `SELECT u.*, m.name AS manager 
+                    FROM users u 
+                    LEFT JOIN users m ON u.manager_id = m.id
+                    WHERE u.id = ?`;
+                this.connection.query(query, [id], async (error, results) => {
                     if (error) {
                         reject(error);
                     } else {
-                        resolve(results[0]);
+                        const user = results[0];
+                        const password = user.password;
+                        const hashedPassword = await bcrypt.hash(password, 10);
+                        user.password = hashedPassword;
+                        resolve(user);
                     }
                 })
             });
             return result;
-
+    
         } catch (error) {
-            throw new Error("Có lỗi trong quá trình tìm người dùng có email " + id);
+            throw new Error("Có lỗi trong quá trình tìm người dùng có ID " + id);
         }
-    } 
+    }
+    
 
     async update(id, payload) {
         const updateData = this.extractUserData(payload);

@@ -3,9 +3,9 @@ const MySQL = require("../utils/mysql.util");
 const ApiError = require("../api-error");
 
 exports.create = async(req, res, next) => {
-    const { name_customer, phone_customer, address_customer } = req.body;
+    const { name_customer, phone_customer } = req.body;
 
-    if (!name_customer || !phone_customer || !address_customer) {
+    if (!name_customer || !phone_customer) {
         return next(new ApiError(400, "Các trường không được bỏ trống"));
     }
 
