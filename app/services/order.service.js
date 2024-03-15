@@ -80,7 +80,7 @@ class OrderService {
                 FROM orders o
                 INNER JOIN order_product op ON o.id = op.order_id
                 INNER JOIN products p ON op.product_id = p.id
-                INNER JOIN users u ON o.user_id = u.id
+                LEFT JOIN users u ON o.user_id = u.id
                 ORDER BY o.id DESC`;
     
             this.connection.query(query, (error, results) => {
@@ -209,6 +209,30 @@ class OrderService {
             });
         });
     }
+
+    async updateStatus(id, payload) {
+        const updateData = {
+            user_id: payload.user_id,
+            status: payload.status
+        };
+    
+        return new Promise((resolve, reject) => {
+            const updateQuery = 'UPDATE orders SET ? WHERE id = ?';
+            this.connection.query(updateQuery, [updateData, id], (error, updateResult) => {
+                if (error) {
+                    reject(error);
+                } else {
+                    if (updateResult && updateResult.length > 0) {
+                        const updatedOrder = updateResult[0];
+                        resolve(updatedOrder);
+                    } else {
+                        reject(new Error("No order found with the given ID"));
+                    }
+                }
+            });
+        });
+    }
+    
 
     async delete(id) {
         return new Promise((resolve, reject) => {

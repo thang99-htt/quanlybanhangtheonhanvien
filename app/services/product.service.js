@@ -7,11 +7,12 @@ class ProductService {
         const productData = {
             name: payload.name,
             description: payload.description,
-            quantity: payload.quantity,
             stock: payload.stock,
             price_purchase: payload.price_purchase,
+            time_purchase: payload.time_purchase,
+            quantity: payload.quantity,
             price_sale: payload.price_sale,
-            time: new Date(),
+            time_slae: payload.time_sale,
             image: payload.image
         };
     
@@ -25,12 +26,12 @@ class ProductService {
     }
 
     async create(payload) {
-        const { name, image, description, quantity, price_purchase, price_sale, time } = this.extractUserData(payload);
+        const { name, image, description } = this.extractUserData(payload);
     
         const productData = {
             name,
             description,
-            stock: quantity,
+            stock: 0,
             image,
         };
     
@@ -40,92 +41,123 @@ class ProductService {
                 if (error) {
                     reject(error);
                 } else {
-                    const productId = insertResult.insertId; // Lấy id của sản phẩm vừa được thêm vào
-    
-                    // Kiểm tra và thêm thời điểm mới vào bảng moments
-                    const checkMomentQuery = 'SELECT * FROM moments WHERE time = ?';
-                    this.connection.query(checkMomentQuery, [time], (momentError, momentResult) => {
-                        if (momentError) {
-                            reject(momentError);
-                        } else {
-                            if (momentResult.length === 0) {
-                                // Thêm thời điểm mới vào bảng moments nếu chưa tồn tại
-                                const addMomentQuery = 'INSERT INTO moments (time) VALUES (?)';
-                                this.connection.query(addMomentQuery, [time], (addMomentError, addMomentResult) => {
-                                    if (addMomentError) {
-                                        reject(addMomentError);
-                                    }
-                                });
-                            }
-    
-                            // Thêm thông tin giá mua và giá bán của sản phẩm vào bảng unit_price
-                            const unitPriceData = {
-                                product_id: productId,
-                                time,
-                                price_purchase,
-                                price_sale,
-                                quantity
-                            };
-    
-                            const unitPriceQuery = 'INSERT INTO unit_price SET ?';
-                            this.connection.query(unitPriceQuery, unitPriceData, (unitPriceError, unitPriceResult) => {
-                                if (unitPriceError) {
-                                    reject(unitPriceError);
-                                } else {
-                                    // Sau khi thêm giá mua và giá bán thành công, trả về thông tin sản phẩm mới
-                                    const selectQuery = 'SELECT * FROM products WHERE id = ?';
-                                    this.connection.query(selectQuery, [productId], (selectError, selectResult) => {
-                                        if (selectError) {
-                                            reject(selectError);
-                                        } else {
-                                            const newProduct = selectResult[0];
-                                            resolve(newProduct);
-                                        }
-                                    });
-                                }
-                            });
-                        }
-                    });
+                    const newProduct = insertResult[0];
+                    resolve(newProduct);
                 }
             });
         });
     }
-      
 
     async find() {
         return new Promise((resolve, reject) => {
-            const query = `WITH LatestPrices AS (
+            const query = `
                 SELECT 
-                  up.product_id,
-                  up.time AS max_time,
-                  ROW_NUMBER() OVER (PARTITION BY up.product_id ORDER BY up.time DESC) AS rn
-                FROM unit_price up
-                JOIN moments m ON up.time = m.time
-              )
-              SELECT 
-                p.id,
-                p.name,
-                p.description,
-                p.stock,
-                p.image,
-                up.price_purchase,
-                up.price_sale,
-                up.quantity,
-                up.time
-              FROM unit_price up
-              JOIN LatestPrices lp ON up.product_id = lp.product_id AND up.time = lp.max_time
-              JOIN products p ON up.product_id = p.id
-              WHERE lp.rn = 1;
-              `;
+                    p.id,
+                    p.name,
+                    p.description,
+                    p.image,
+                    p.stock,
+                    upr.time AS time_purchase,
+                    upr.price_purchase AS price_purchase,
+                    upr.quantity AS quantity_purchase,
+                    ubs.product_id,
+                    ubs.time AS time_sale,
+                    ubs.price_sale AS price_sale,
+                    ubs.checked AS checked
+                FROM
+                    products p
+                LEFT JOIN unit_price_purchase upr ON p.id = upr.product_id
+                LEFT JOIN unit_price_sale ubs ON p.id = ubs.product_id
+                
+                    
+            `;
             this.connection.query(query, (error, results) => {
                 if (error) {
                     reject(error);
                 } else {
-                    resolve(results);
+                    // Tạo mảng để chứa sản phẩm và giá mua/bán của nó
+                    const productsWithPrices = {};
+    
+                    // Lặp qua kết quả từ câu truy vấn SQL
+                    results.forEach(async row => {
+                        const productId = row.id;
+    
+                        // Nếu sản phẩm chưa tồn tại trong mảng, thêm vào
+                        if (!productsWithPrices[productId]) {
+                            productsWithPrices[productId] = {
+                                id: row.id,
+                                name: row.name,
+                                description: row.description,
+                                image: row.image,
+                                stock: row.stock,
+                                purchasesInfo: [],
+                                salesInfo: [],
+                                time_sale: null, // Mặc định là null
+                                price_sale: null 
+                            };
+                        }
+
+                        if (row.checked === 1) {
+                            if (row.time_sale && row.price_sale) {
+                                productsWithPrices[productId].time_sale = row.time_sale;
+                                productsWithPrices[productId].price_sale = row.price_sale;
+                            }
+                        }
+    
+                        // Thêm giá mua/bán vào mảng giá của sản phẩm
+                        if (row.time_purchase && row.price_purchase) {
+                            const rowTime = new Date(row.time_purchase);
+                            const existingPurchase = productsWithPrices[productId].purchasesInfo.find(purchase => {
+                                const purchaseTime = new Date(purchase.time);
+                                return purchaseTime.getTime() === rowTime.getTime() &&
+                                    purchase.price === row.price_purchase &&
+                                    purchase.quantity === row.quantity_purchase;
+                            });
+                            if (!existingPurchase) {
+                                productsWithPrices[productId].purchasesInfo.push({
+                                    time: row.time_purchase,
+                                    price: row.price_purchase,
+                                    quantity: row.quantity_purchase
+                                });
+                            }
+                        }
+    
+                        if (row.time_sale && row.price_sale) {
+                            const rowTime = new Date(row.time_sale);
+                            const existingSale = productsWithPrices[productId].salesInfo.find(sale => {
+                                const saleTime = new Date(sale.time);
+                                return saleTime.getTime() === rowTime.getTime() &&
+                                    sale.price === row.price_sale &&
+                                    sale.quantity === row.quantity_sale;
+                            });
+                            if (!existingSale) {
+                                productsWithPrices[productId].salesInfo.push({
+                                    product_id: row.product_id,
+                                    time: row.time_sale,
+                                    price: row.price_sale,
+                                    checked: row.checked,
+                                });
+                            }
+                        }
+
+                        
+                    });
+    
+                    Object.values(productsWithPrices).forEach(product => {
+                        product.purchasesInfo.reverse();
+                        product.salesInfo.reverse();
+                    });
+        
+                    const productsArray = Object.values(productsWithPrices).reverse();
+                    resolve(productsArray);
+    
+                    resolve(productsArray);
                 }
             });
-        });;
+        });
     }
+    
+    
 
     async findById(id) {
         try {
@@ -157,12 +189,12 @@ class ProductService {
     
 
     async update(id, payload) {
-        const { name, description, quantity, price_purchase, price_sale } = this.extractUserData(payload);
+        const { name, description, image } = this.extractUserData(payload);
     
         const updateData = {
             name,
             description,
-            stock: quantity
+            image: image
         };
     
         return new Promise((resolve, reject) => {
@@ -171,53 +203,157 @@ class ProductService {
                 if (error) {
                     reject(error);
                 } else {
-                    const selectQuery = 'SELECT price_purchase, price_sale FROM unit_price WHERE product_id = ? ORDER BY time DESC LIMIT 1';
-                    this.connection.query(selectQuery, [id], (selectError, selectResult) => {
-                        if (selectError) {
-                            reject(selectError);
-                        } else {
-                            const latestPriceData = selectResult[0];
-                            if (
-                                latestPriceData.price_purchase !== price_purchase ||
-                                latestPriceData.price_sale !== price_sale
-                            ) {
-                                const unitPriceData = {
-                                    product_id: id,
-                                    time: new Date(), 
-                                    price_purchase,
-                                    price_sale,
-                                    quantity
-                                };
+                    resolve(updateResult);
+                }
+            });
+        });
+    }
     
-                                const momentQuery = 'INSERT INTO moments (time) VALUES (?) ON DUPLICATE KEY UPDATE time = VALUES(time)';
-                                this.connection.query(momentQuery, [unitPriceData.time], (momentError, momentResult) => {
-                                    if (momentError) {
-                                        reject(momentError);
-                                    } else {
-                                        const unitPriceQuery = 'INSERT INTO unit_price SET ? ON DUPLICATE KEY UPDATE price_purchase = VALUES(price_purchase), price_sale = VALUES(price_sale), quantity = VALUES(quantity)';
-                                        this.connection.query(unitPriceQuery, unitPriceData, (unitPriceError, unitPriceResult) => {
-                                            if (unitPriceError) {
-                                                reject(unitPriceError);
-                                            } else {
-                                                const selectQuery = 'SELECT * FROM products WHERE id = ?';
-                                                this.connection.query(selectQuery, [id], (selectError, selectResult) => {
-                                                    if (selectError) {
-                                                        reject(selectError);
-                                                    } else {
-                                                        const updatedProduct = selectResult[0];
-                                                        resolve(updatedProduct);
-                                                    }
-                                                });
-                                            }
-                                        });
-                                    }
-                                });
-                            } else {
-                                resolve(null);
-                            }
+    async updatePricePurchase(id, payload) {
+        const updateData = {
+            time: payload.time,
+            price_purchase: payload.price,
+            quantity: payload.quantity,
+            product_id: id
+        };
+    
+        return new Promise((resolve, reject) => {
+            const checkPriceQuery = 'SELECT * FROM unit_price_purchase WHERE price_purchase = ? AND time = ? AND product_id = ? LIMIT 1';
+            this.connection.query(checkPriceQuery, [payload.price, payload.time, id], (error, results) => {
+                if (error) {
+                    reject(error);
+                } else if (results.length == 0) {
+                    const checkTimeQuery = 'SELECT * FROM moments WHERE time = ? LIMIT 1';
+                    this.connection.query(checkTimeQuery, [payload.time], (error, timeResults) => {
+                        if (error) {
+                            reject(error);
+                        } else if (timeResults.length == 0) {
+                            const insertTimeQuery = 'INSERT INTO moments (time) VALUES (?)';
+                            this.connection.query(insertTimeQuery, [payload.time], (error, insertResult) => {
+                                if (error) {
+                                    reject(error);
+                                } else {
+                                    insertPricePurchase(updateData, resolve, reject);
+                                }
+                            });
+                        } else {
+                            insertPricePurchase(updateData, resolve, reject);
                         }
                     });
+                } else {
+                    resolve({ message: 'Price already exists for the given time, product, and price.' });
                 }
+            });
+            const insertPricePurchase = (updateData, resolve, reject) => {
+                const insertQuery = 'INSERT INTO unit_price_purchase SET ?';
+                this.connection.query(insertQuery, updateData, (error, insertResult) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(insertResult);
+                    }
+                });
+            };
+        });
+    }
+ 
+    async updatePriceSale(id, payload) {
+        const updateData = {
+            time: payload.time,
+            price_sale: payload.price,
+            product_id: id,
+            checked: 1
+        };
+    
+        return new Promise((resolve, reject) => {
+            const checkPriceQuery = 'SELECT * FROM unit_price_sale WHERE price_sale = ? AND time = ? AND product_id = ? LIMIT 1';
+            this.connection.query(checkPriceQuery, [payload.price, payload.time, id], (error, results) => {
+                if (error) {
+                    reject(error);
+                } else if (results.length == 0) {
+                    const checkTimeQuery = 'SELECT * FROM moments WHERE time = ? LIMIT 1';
+                    this.connection.query(checkTimeQuery, [payload.time], (error, timeResults) => {
+                        if (error) {
+                            reject(error);
+                        } else if (timeResults.length == 0) {
+                            const insertTimeQuery = 'INSERT INTO moments (time) VALUES (?)';
+                            this.connection.query(insertTimeQuery, [payload.time], (error, insertResult) => {
+                                if (error) {
+                                    reject(error);
+                                } else {
+                                    insertPriceSale(updateData, resolve, reject); 
+                                }
+                            });
+                        } else {
+                            insertPriceSale(updateData, resolve, reject); 
+                        }
+                    });
+                } else {
+                    resolve({ message: 'Price already exists for the given time, product, and price.' });
+                }
+            });
+    
+            const insertPriceSale = (updateData, resolve, reject) => { 
+                const checkDuplicateQuery = 'SELECT * FROM unit_price_sale WHERE product_id = ? AND time = ? LIMIT 1';
+                this.connection.query(checkDuplicateQuery, [updateData.product_id, updateData.time], (error, results) => {
+                    if (error) {
+                        reject(error);
+                    } else if (results.length > 0) {
+                        resolve({ message: 'Unit price sale already exists for the given product and time.' });
+                    } else {
+                        // Update other entries with checked = 0
+                        const updateExistingQuery = 'UPDATE unit_price_sale SET checked = 0 WHERE product_id = ? AND checked = 1';
+                        this.connection.query(updateExistingQuery, [updateData.product_id], (error, updateResult) => {
+                            if (error) {
+                                reject(error);
+                            } else {
+                                // Insert the new entry
+                                const insertQuery = 'INSERT INTO unit_price_sale SET ?';
+                                this.connection.query(insertQuery, updateData, (error, insertResult) => {
+                                    if (error) {
+                                        reject(error);
+                                    } else {
+                                        resolve(insertResult);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            };
+        });
+    }
+    
+    async updateChecked(payload) {
+        const updateData = {
+            product_id: payload.product_id,
+            time: new Date(payload.time).toISOString().slice(0, 19).replace('T', ' '), // Format datetime
+            price: payload.price,
+            checked: 1
+        };
+    
+        return new Promise((resolve, reject) => {
+            const checkPriceQuery = 'SELECT * FROM unit_price_sale WHERE price_sale = ? AND time = ? AND product_id = ? LIMIT 1';
+            this.connection.query(checkPriceQuery, [payload.price, updateData.time, payload.product_id], (error, results) => {
+                if (error) {
+                    reject(error);
+                } else {
+                    const updateExistingQuery = 'UPDATE unit_price_sale SET checked = 0 WHERE product_id = ? AND checked = 1';
+                    this.connection.query(updateExistingQuery, [updateData.product_id], (error, updateResult) => {
+                        if (error) {
+                            reject(error);
+                        } else {
+                            const insertQuery = 'UPDATE unit_price_sale SET checked = 1 WHERE product_id = ? AND time = ? AND price_sale = ?';
+                            this.connection.query(insertQuery, [updateData.product_id, updateData.time, updateData.price], (error, insertResult) => {
+                                if (error) {
+                                    reject(error);
+                                } else {
+                                    resolve(insertResult);
+                                }
+                            });
+                        }
+                    });
+                } 
             });
         });
     }

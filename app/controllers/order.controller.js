@@ -53,6 +53,25 @@ exports.findOne = async(req, res, next) => {
     }
 };
 
+exports.updateStatus = async(req, res, next) => {
+    try {
+        const orderService = new OrderService(MySQL.connection);
+        const product_existed = await orderService.findById(req.params.id);
+        if (!product_existed) {
+            return next(new ApiError(404, "Không tìm thấy đơn hàng."));
+        }
+        const result = await orderService.updateStatus(req.params.id, req.body);
+        return res.send(document);
+    } catch (error) {
+        return next(
+            new ApiError(
+                500,
+                error
+            )
+        );
+    }
+};
+
 exports.update = async(req, res, next) => {
     try {
         const orderService = new OrderService(MySQL.connection);
